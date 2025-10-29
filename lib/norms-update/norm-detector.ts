@@ -15,9 +15,13 @@ export async function detectNormsInDocument(
   const batchSize = 20;
   const allReferences: NormReference[] = [];
 
+  console.log(`[NORMS] Analyzing ${paragraphs.length} paragraphs in ${Math.ceil(paragraphs.length / batchSize)} batches...`);
+
   for (let i = 0; i < paragraphs.length; i += batchSize) {
     const batch = paragraphs.slice(i, i + batchSize);
     const batchText = batch.map((p, idx) => `[${i + idx}] ${p.text}`).join('\n\n');
+
+    console.log(`[NORMS] Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(paragraphs.length / batchSize)} (paragraphs ${i}-${Math.min(i + batchSize, paragraphs.length)})...`);
 
     const prompt = `Você é um especialista em análise de documentos jurídicos e técnicos. Analise o texto abaixo e identifique TODAS as referências a normas, leis, decretos, portarias, resoluções e normas técnicas.
 
@@ -63,7 +67,12 @@ REGRAS IMPORTANTES:
 - Se não houver referências, retorne: {"references": []}
 - paragraphIndex deve corresponder ao número entre colchetes [X]
 
-Retorne APENAS o JSON, sem texto adicional.`;
+FORMATO DA RESPOSTA:
+Retorne APENAS um objeto JSON válido, sem markdown, sem explicações, sem texto adicional.
+Comece sua resposta com { e termine com }
+Não use blocos de código markdown.
+
+Retorne APENAS o JSON.`;
 
     try {
       let response: string;
@@ -97,15 +106,27 @@ Retorne APENAS o JSON, sem texto adicional.`;
         response = result.response.text().trim();
       }
 
-      // Parse JSON response
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      // Parse JSON response - remove markdown code blocks primeiro
+      let cleanedResponse = response.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+      const jsonMatch = cleanedResponse.match(/\{[\s\S]*\}/);
+
       if (!jsonMatch) {
         console.warn('[NORMS] AI returned non-JSON response:', response.substring(0, 200));
+        console.warn('[NORMS] Full response:', response);
         continue;
       }
 
-      const parsed = JSON.parse(jsonMatch[0]);
+      let parsed;
+      try {
+        parsed = JSON.parse(jsonMatch[0]);
+      } catch (parseError: any) {
+        console.error('[NORMS] JSON parse error:', parseError.message);
+        console.error('[NORMS] Attempted to parse:', jsonMatch[0].substring(0, 200));
+        continue;
+      }
+
       const references = parsed.references || [];
+      console.log(`[NORMS] Found ${references.length} references in this batch`);
 
       // Processa e valida referências
       for (const ref of references) {
